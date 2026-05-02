@@ -1,0 +1,158 @@
+version: '3.8'
+
+services:
+  # Базы данных
+  user-db:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: userdb
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5432:5432"
+    volumes:
+      - user-db-data:/var/lib/postgresql/data
+    networks:
+      - movie-network
+
+  film-db:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: filmdb
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5433:5432"
+    volumes:
+      - film-db-data:/var/lib/postgresql/data
+    networks:
+      - movie-network
+
+  review-db:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: reviewdb
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5434:5432"
+    volumes:
+      - review-db-data:/var/lib/postgresql/data
+    networks:
+      - movie-network
+
+  # Кэш
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    networks:
+      - movie-network
+
+  # Kafka
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+    ports:
+      - "2181:2181"
+    networks:
+      - movie-network
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    depends_on:
+      - zookeeper
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    ports:
+      - "9092:9092"
+    networks:
+      - movie-network
+
+  # Сервисы
+  user-service:
+    build: ./user-service
+    depends_on:
+      - user-db
+      - kafka
+    ports:
+      - "8081:8081"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://user-db:5432/userdb
+      SPRING_DATASOURCE_USERNAME: user
+      SPRING_DATASOURCE_PASSWORD: password
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+    networks:
+      - movie-network
+
+  film-service:
+    build: ./film-service
+    depends_on:
+      - film-db
+      - kafka
+      - redis
+    ports:
+      - "8082:8082"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://film-db:5432/filmdb
+      SPRING_DATASOURCE_USERNAME: user
+      SPRING_DATASOURCE_PASSWORD: password
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      SPRING_DATA_REDIS_HOST: redis
+    networks:
+      - movie-network
+
+  review-service:
+    build: ./review-service
+    depends_on:
+      - review-db
+      - kafka
+      - redis
+    ports:
+      - "8083:8083"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://review-db:5432/reviewdb
+      SPRING_DATASOURCE_USERNAME: user
+      SPRING_DATASOURCE_PASSWORD: password
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      SPRING_DATA_REDIS_HOST: redis
+    networks:
+      - movie-network
+
+  film-parsing-service:
+    build: ./film-parsing-service
+    depends_on:
+      - kafka
+      - redis
+    ports:
+      - "8084:8084"
+    environment:
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      SPRING_DATA_REDIS_HOST: redis
+    networks:
+      - movie-network
+
+  api-gateway:
+    build: ./api-gateway
+    depends_on:
+      - user-service
+      - film-service
+      - review-service
+      - film-parsing-service
+    ports:
+      - "8080:8080"
+    networks:
+      - movie-network
+
+networks:
+  movie-network:
+    driver: bridge
+
+volumes:
+  user-db-data:
+  film-db-data:
+  review-db-data:
